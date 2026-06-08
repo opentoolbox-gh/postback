@@ -1,7 +1,7 @@
 services:
 
   postback:
-    image: ghcr.io/regisrex/postback:latest
+    image: ghcr.io/opentoolbox-gh/postback:latest
     restart: unless-stopped
 
     extra_hosts:

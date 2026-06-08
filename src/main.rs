@@ -379,14 +379,13 @@ struct Slack { client: Client, token: String, channel: String }
 
 impl Slack {
     fn from_cli(cli: &Cli) -> Option<Self> {
-        match (&cli.slack_token, &cli.slack_channel) {
-            (Some(t), Some(c)) => Some(Self {
-                client:  Client::new(),
-                token:   t.clone(),
-                channel: c.clone(),
-            }),
-            _ => None,
-        }
+        let token   = cli.slack_token.as_deref().filter(|s| !s.is_empty())?;
+        let channel = cli.slack_channel.as_deref().filter(|s| !s.is_empty())?;
+        Some(Self {
+            client:  Client::new(),
+            token:   token.to_string(),
+            channel: channel.to_string(),
+        })
     }
 
     async fn post(&self, payload: serde_json::Value) -> Result<()> {
@@ -493,7 +492,8 @@ fn dump_database(cli: &Cli) -> Result<(PathBuf, String, String)> {
     let pg_dump    = resolve_pg_dump(cli)?;
     let timestamp  = Utc::now().format("%Y-%m-%dT%H-%M-%SZ").to_string();
 
-    let (filename, encrypt_stage) = match &cli.encryption_key {
+    let enc_key = cli.encryption_key.as_deref().filter(|s| !s.is_empty());
+    let (filename, encrypt_stage) = match enc_key {
         Some(k) => (format!("hourly_{timestamp}.sql.gz.age"), format!("| age -e -r {k}")),
         None    => (format!("hourly_{timestamp}.sql.gz"),     String::new()),
     };
@@ -503,7 +503,7 @@ fn dump_database(cli: &Cli) -> Result<(PathBuf, String, String)> {
     info!(
         "Dumping `{}` → {} {}",
         cli.db_name, dump_path.display(),
-        if cli.encryption_key.is_some() { "(encrypted)" } else { "" },
+        if cli.encryption_key.as_deref().is_some_and(|s| !s.is_empty()) { "(encrypted)" } else { "" },
     );
 
     let cmd = format!(
@@ -708,7 +708,7 @@ async fn main() -> Result<()> {
 
             let db = target_db.as_deref().unwrap_or(&cli.db_name);
 
-            if cli.encryption_key.is_some() {
+            if cli.encryption_key.as_deref().is_some_and(|s| !s.is_empty()) {
                 info!("Encryption is configured; make sure --private-key points to the age private key");
             }
 
@@ -743,7 +743,7 @@ async fn main() -> Result<()> {
 
         // ── Backup (default) ─────────────────────────────────────────────────
         Cmd::Backup => {
-            if cli.encryption_key.is_some() {
+            if cli.encryption_key.as_deref().is_some_and(|s| !s.is_empty()) {
                 info!("Encryption: enabled (age)");
             }
 
