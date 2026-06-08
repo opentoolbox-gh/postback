@@ -496,26 +496,98 @@ ls -lh /var/backups/postgres/hourly/
 
 ---
 
-## 10. Running on a server (without Docker Desktop)
+## 10. Deploying on a server (production)
+
+Use `docker-compose.prod.yml` on your server — it pulls the pre-built image from `ghcr.io` instead of building from source.
+
+### 10.1 Install Docker
 
 ```bash
-# Install Docker Engine
 curl -fsSL https://get.docker.com | sh
 sudo apt-get install docker-compose-plugin
+```
 
-# Clone and configure
-git clone https://github.com/regisrex/postback.git
-cd postback
-cp .env.example .env
-# edit .env
+### 10.2 Create a working directory and configure
 
-# Place the SSH key
+```bash
+mkdir -p /opt/postback && cd /opt/postback
+
+# Download the production compose file
+curl -fsSL https://raw.githubusercontent.com/regisrex/postback/main/docker-compose.prod.yml \
+  -o docker-compose.prod.yml
+
+# Create your env file
+curl -fsSL https://raw.githubusercontent.com/regisrex/postback/main/.env.example -o .env
+# edit .env with your values
+```
+
+### 10.3 Set up storage
+
+**Local backend** — create the backup directory:
+
+```bash
+sudo mkdir -p /var/backups/postback
+```
+
+Set in `.env`:
+
+```env
+STORAGE_BACKEND=local
+LOCAL_BACKUP_PATH=/var/backups/postback
+```
+
+**Rsync backend** — place your SSH private key:
+
+```bash
 sudo mkdir -p /etc/postback
 sudo cp /path/to/rsync_key /etc/postback/rsync_key
 sudo chmod 600 /etc/postback/rsync_key
+```
 
-# Start
-docker compose --env-file .env up -d --build
+Set in `.env`:
+
+```env
+STORAGE_BACKEND=rsync
+RSYNC_SSH_KEY_PATH=/etc/postback/rsync_key
+```
+
+### 10.4 Pull and start
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env pull
+docker compose -f docker-compose.prod.yml --env-file .env up -d
+```
+
+### 10.5 View logs
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env logs -f
+```
+
+### 10.6 Run one-off commands
+
+```bash
+# List all available backups
+docker compose -f docker-compose.prod.yml --env-file .env run --rm postback list
+
+# Restore latest hourly backup
+docker compose -f docker-compose.prod.yml --env-file .env run --rm postback restore
+
+# Restore latest daily backup
+docker compose -f docker-compose.prod.yml --env-file .env run --rm postback restore --tier daily
+
+# Restore a specific file into a recovery database
+docker compose -f docker-compose.prod.yml --env-file .env run --rm postback restore \
+  --tier daily \
+  --file hourly_2026-05-23T22-00-00Z.sql.gz \
+  --target-db mydb_recovered
+```
+
+### 10.7 Update to a newer image
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env pull
+docker compose -f docker-compose.prod.yml --env-file .env up -d
 ```
 
 `restart: unless-stopped` ensures the container comes back up after a reboot automatically.
