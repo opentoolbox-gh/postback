@@ -22,9 +22,27 @@ RUN touch src/main.rs && cargo build --release
 # ─── Stage 2: runtime ─────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y \
-    ca-certificates \
-    postgresql-client \
+# Install pg_dump for all active PostgreSQL major versions (13–17).
+# At runtime, resolve_pg_dump() queries the server version via psql and
+# invokes /usr/lib/postgresql/<major>/bin/pg_dump — no version mismatch possible.
+# To add support for a new major version (e.g. 18), append postgresql-client-18.
+RUN apt-get update && apt-get install -y ca-certificates curl \
+    && install -d /usr/share/postgresql-common/pgdg \
+    && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+       -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+    && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+       https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
+       > /etc/apt/sources.list.d/pgdg.list \
+    && apt-get update \
+    && apt-get install -y \
+       postgresql-client-13 \
+       postgresql-client-14 \
+       postgresql-client-15 \
+       postgresql-client-16 \
+       postgresql-client-17 \
+       age \
+       rsync \
+       openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root user

@@ -1,58 +1,79 @@
 services:
 
-  # ── Backup job (runs on a cron schedule inside the container) ───────────────
   postback:
     build:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
     environment:
-      # PostgreSQL connection — point at any external host
-      PGHOST: ${PGHOST}
-      PGPORT: ${PGPORT:-5432}
+      # PostgreSQL connection
+      PGHOST:     ${PGHOST}
+      PGPORT:     ${PGPORT:-5432}
       PGDATABASE: ${PGDATABASE}
-      PGUSER: ${PGUSER}
+      PGUSER:     ${PGUSER}
       PGPASSWORD: ${PGPASSWORD}
 
-      # Google Drive
-      GOOGLE_SERVICE_ACCOUNT_KEY: /secrets/sa_key.json
-      GDRIVE_FOLDER_ID: ${GDRIVE_FOLDER_ID}
+      # Storage backend: "local" or "rsync"
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
+
+      # ── local backend ──────────────────────────────────────────────────────
+      LOCAL_STORAGE_PATH: /backup
+
+      # ── rsync backend (ignored when STORAGE_BACKEND=local) ────────────────
+      RSYNC_HOST:    ${RSYNC_HOST:-}
+      RSYNC_USER:    ${RSYNC_USER:-}
+      RSYNC_PATH:    ${RSYNC_PATH:-}
+      RSYNC_SSH_KEY: /secrets/rsync_key
+      RSYNC_PORT:    ${RSYNC_PORT:-22}
+
+      # Encryption (optional)
+      ENCRYPTION_PUBLIC_KEY: ${ENCRYPTION_PUBLIC_KEY:-}
 
       # Retention knobs (optional — these are the defaults)
       # KEEP_HOURLY: "6"
-      # KEEP_6H: "4"
-      # KEEP_DAILY: "28"
+      # KEEP_6H:     "4"
+      # KEEP_DAILY:  "28"
 
       # Slack notifications (optional)
-      # SLACK_BOT_TOKEN: "xoxb-..."
-      # SLACK_CHANNEL: "#db-alerts"
-      # SLACK_NOTIFY_ON: "success,failure"   # start,auth,success,failure,retention
+      # SLACK_BOT_TOKEN:  "xoxb-..."
+      # SLACK_CHANNEL:    "#db-alerts"
+      # SLACK_NOTIFY_ON:  "success,failure"
 
-      # Logging: info | debug
       RUST_LOG: ${RUST_LOG:-info}
 
     volumes:
-      # Mount your service account JSON key (read-only)
-      - ${SA_KEY_PATH}:/secrets/sa_key.json:ro
-      # Temp dump dir (tmpfs keeps it in RAM, never touches disk)
+      # ── local backend: mount a host directory or named volume ──────────────
+      - ${LOCAL_BACKUP_PATH:-./backups}:/backup
+
+      # ── rsync backend: mount your SSH private key ──────────────────────────
+      # Uncomment when STORAGE_BACKEND=rsync
+      # - ${RSYNC_SSH_KEY_PATH}:/secrets/rsync_key:ro
+
+      # Temp dump dir in RAM — never touches persistent disk
       - type: tmpfs
         target: /tmp/postback
+        tmpfs:
+          mode: 0777
 
-    # postback is a one-shot binary — wrap it in a cron loop
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
+        [ -f /secrets/rsync_key ] && chmod 600 /secrets/rsync_key
         echo "postback scheduler starting — running every hour"
         while true; do
           echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Running backup..."
-          /usr/local/bin/postback \
-            --db-host $$PGHOST \
-            --db-port $$PGPORT \
-            --db-name $$PGDATABASE \
-            --db-user $$PGUSER \
-            --sa-key $$GOOGLE_SERVICE_ACCOUNT_KEY \
-            --gdrive-folder-id $$GDRIVE_FOLDER_ID \
-            --tmp-dir /tmp/postback
+          /usr/local/bin/postback backup \
+            --db-host             $$PGHOST \
+            --db-port             $$PGPORT \
+            --db-name             $$PGDATABASE \
+            --db-user             $$PGUSER \
+            --storage-backend     $$STORAGE_BACKEND \
+            --local-storage-path  /backup \
+            --tmp-dir             /tmp/postback
           EXIT_CODE=$$?
           if [ $$EXIT_CODE -ne 0 ]; then
             echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Backup FAILED (exit $$EXIT_CODE)"
@@ -61,3 +82,7 @@ services:
           fi
           sleep 3600
         done
+
+volumes:
+  # Named volume alternative to a host path — uncomment to use
+  # postback_data:

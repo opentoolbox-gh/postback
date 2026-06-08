@@ -1,0 +1,74 @@
+services:
+
+  postback:
+    image: ghcr.io/regisrex/postback:latest
+    restart: unless-stopped
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    environment:
+      # PostgreSQL
+      PGHOST:     ${PGHOST}
+      PGPORT:     ${PGPORT:-5432}
+      PGDATABASE: ${PGDATABASE}
+      PGUSER:     ${PGUSER}
+      PGPASSWORD: ${PGPASSWORD}
+
+      # Storage
+      STORAGE_BACKEND:    ${STORAGE_BACKEND:-local}
+      LOCAL_STORAGE_PATH: /backup
+      RSYNC_HOST:         ${RSYNC_HOST:-}
+      RSYNC_USER:         ${RSYNC_USER:-}
+      RSYNC_PATH:         ${RSYNC_PATH:-}
+      RSYNC_SSH_KEY:      /secrets/rsync_key
+      RSYNC_PORT:         ${RSYNC_PORT:-22}
+
+      # Encryption
+      ENCRYPTION_PUBLIC_KEY: ${ENCRYPTION_PUBLIC_KEY:-}
+
+      # Retention
+      KEEP_HOURLY: ${KEEP_HOURLY:-6}
+      KEEP_6H:     ${KEEP_6H:-4}
+      KEEP_DAILY:  ${KEEP_DAILY:-28}
+
+      # Slack
+      SLACK_BOT_TOKEN:  ${SLACK_BOT_TOKEN:-}
+      SLACK_CHANNEL:    ${SLACK_CHANNEL:-}
+      SLACK_NOTIFY_ON:  ${SLACK_NOTIFY_ON:-success,failure}
+
+      RUST_LOG: ${RUST_LOG:-info}
+
+    volumes:
+      - ${LOCAL_BACKUP_PATH:-/var/backups/postback}:/backup
+      - ${RSYNC_SSH_KEY_PATH:-/etc/postback/rsync_key}:/secrets/rsync_key:ro
+      - type: tmpfs
+        target: /tmp/postback
+        tmpfs:
+          mode: 0777
+
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        [ -f /secrets/rsync_key ] && chmod 600 /secrets/rsync_key
+        echo "postback scheduler starting — running every hour"
+        while true; do
+          echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Running backup..."
+          /usr/local/bin/postback backup \
+            --db-host            $$PGHOST \
+            --db-port            $$PGPORT \
+            --db-name            $$PGDATABASE \
+            --db-user            $$PGUSER \
+            --storage-backend    $$STORAGE_BACKEND \
+            --local-storage-path /backup \
+            --keep-hourly        $$KEEP_HOURLY \
+            --keep-6h            $$KEEP_6H \
+            --keep-daily         $$KEEP_DAILY
+          EXIT_CODE=$$?
+          if [ $$EXIT_CODE -ne 0 ]; then
+            echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Backup FAILED (exit $$EXIT_CODE)"
+          else
+            echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Backup OK"
+          fi
+          sleep 3600
+        done
