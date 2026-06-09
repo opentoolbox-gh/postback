@@ -92,6 +92,12 @@ struct Cli {
     #[arg(long, env = "KEEP_DAILY", default_value_t = 28)]
     keep_daily: usize,
 
+    // ── Scheduler ────────────────────────────────────────────────────────────
+
+    /// Seconds between backup runs. Set to 0 to run once and exit.
+    #[arg(long, env = "BACKUP_INTERVAL_SECS", default_value_t = 3600)]
+    backup_interval_secs: u64,
+
     // ── Encryption ────────────────────────────────────────────────────────────
 
     /// age public key to encrypt backups (optional)
@@ -746,55 +752,72 @@ async fn main() -> Result<()> {
             if cli.encryption_key.as_deref().is_some_and(|s| !s.is_empty()) {
                 info!("Encryption: enabled (age)");
             }
-
-            if let Some(ref s) = slack {
-                if notify_on.start {
-                    s.notify_start(&cli.db_name, backend.name()).await
-                        .unwrap_or_else(|e| warn!("Slack: {e}"));
-                }
+            if cli.backup_interval_secs > 0 {
+                info!("Scheduler: running every {} s", cli.backup_interval_secs);
             }
 
-            backend.ensure_dirs()?;
-
-            if let Some(ref s) = slack {
-                if notify_on.auth {
-                    let target = match cli.storage_backend.as_str() {
-                        "rsync" => format!(
-                            "{}@{}",
-                            cli.rsync_user.as_deref().unwrap_or("?"),
-                            cli.rsync_host.as_deref().unwrap_or("?"),
-                        ),
-                        _ => cli.local_storage_path.display().to_string(),
-                    };
-                    s.notify_auth(&cli.db_name, &target).await
-                        .unwrap_or_else(|e| warn!("Slack: {e}"));
-                }
-            }
-
-            let result = run_backup(&cli, backend.as_ref());
-
-            if let Some(ref s) = slack {
-                match &result {
-                    Ok((filename, size, actions)) => {
-                        if notify_on.success {
-                            s.notify_success(&cli.db_name, filename, size).await
-                                .unwrap_or_else(|e| warn!("Slack: {e}"));
-                        }
-                        if notify_on.retention && !actions.is_empty() {
-                            s.notify_retention(&cli.db_name, actions).await
-                                .unwrap_or_else(|e| warn!("Slack: {e}"));
-                        }
-                    }
-                    Err(err) => {
-                        if notify_on.failure {
-                            s.notify_failure(&cli.db_name, &format!("{err:#}")).await
-                                .unwrap_or_else(|e| warn!("Slack: {e}"));
-                        }
+            loop {
+                if let Some(ref s) = slack {
+                    if notify_on.start {
+                        s.notify_start(&cli.db_name, backend.name()).await
+                            .unwrap_or_else(|e| warn!("Slack: {e}"));
                     }
                 }
+
+                backend.ensure_dirs()?;
+
+                if let Some(ref s) = slack {
+                    if notify_on.auth {
+                        let target = match cli.storage_backend.as_str() {
+                            "rsync" => format!(
+                                "{}@{}",
+                                cli.rsync_user.as_deref().unwrap_or("?"),
+                                cli.rsync_host.as_deref().unwrap_or("?"),
+                            ),
+                            _ => cli.local_storage_path.display().to_string(),
+                        };
+                        s.notify_auth(&cli.db_name, &target).await
+                            .unwrap_or_else(|e| warn!("Slack: {e}"));
+                    }
+                }
+
+                let result = run_backup(&cli, backend.as_ref());
+
+                if let Some(ref s) = slack {
+                    match &result {
+                        Ok((filename, size, actions)) => {
+                            if notify_on.success {
+                                s.notify_success(&cli.db_name, filename, size).await
+                                    .unwrap_or_else(|e| warn!("Slack: {e}"));
+                            }
+                            if notify_on.retention && !actions.is_empty() {
+                                s.notify_retention(&cli.db_name, actions).await
+                                    .unwrap_or_else(|e| warn!("Slack: {e}"));
+                            }
+                        }
+                        Err(err) => {
+                            if notify_on.failure {
+                                s.notify_failure(&cli.db_name, &format!("{err:#}")).await
+                                    .unwrap_or_else(|e| warn!("Slack: {e}"));
+                            }
+                            warn!("Backup failed: {err:#}");
+                        }
+                    }
+                } else if let Err(err) = result {
+                    warn!("Backup failed: {err:#}");
+                }
+
+                info!("=== postback done ===");
+
+                if cli.backup_interval_secs == 0 {
+                    break;
+                }
+
+                info!("Next run in {} s", cli.backup_interval_secs);
+                tokio::time::sleep(tokio::time::Duration::from_secs(cli.backup_interval_secs)).await;
             }
 
-            result.map(|_| ())?;
+            return Ok(());
         }
     }
 

@@ -30,6 +30,9 @@ services:
       RSYNC_SSH_KEY: /secrets/rsync_key
       RSYNC_PORT:    ${RSYNC_PORT:-22}
 
+      # Scheduler (seconds between runs, default 1 hour)
+      BACKUP_INTERVAL_SECS: ${BACKUP_INTERVAL_SECS:-3600}
+
       # Encryption (optional)
       ENCRYPTION_PUBLIC_KEY: ${ENCRYPTION_PUBLIC_KEY:-}
 
@@ -58,30 +61,6 @@ services:
         target: /tmp/postback
         tmpfs:
           mode: 0777
-
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        [ -f /secrets/rsync_key ] && chmod 600 /secrets/rsync_key
-        echo "postback scheduler starting — running every hour"
-        while true; do
-          echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Running backup..."
-          /usr/local/bin/postback backup \
-            --db-host             $$PGHOST \
-            --db-port             $$PGPORT \
-            --db-name             $$PGDATABASE \
-            --db-user             $$PGUSER \
-            --storage-backend     $$STORAGE_BACKEND \
-            --local-storage-path  /backup \
-            --tmp-dir             /tmp/postback
-          EXIT_CODE=$$?
-          if [ $$EXIT_CODE -ne 0 ]; then
-            echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Backup FAILED (exit $$EXIT_CODE)"
-          else
-            echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Backup OK"
-          fi
-          sleep 3600
-        done
 
 # To use a named volume instead of a host path, uncomment both blocks below:
 # volumes:
